@@ -1,0 +1,54 @@
+name: Subir noticiero a Drive
+
+# Toma el MP3 del día desde la rama "audio" y lo sube a Google Drive (carpeta 01_Noticias).
+# Corre varias veces en la madrugada (hora de Chile); si el archivo ya está en Drive, no hace nada.
+on:
+  schedule:
+    - cron: "40 7 * * *"
+    - cron: "10 8 * * *"
+    - cron: "40 8 * * *"
+    - cron: "30 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: subir-a-drive
+  cancel-in-progress: false
+
+jobs:
+  subir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audio
+
+      - name: Instalar rclone
+        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Subir a Drive
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RCLONE_CONF:-}" ]; then
+            echo "::error::Falta el secreto RCLONE_CONF (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          mkdir -p ~/.config/rclone
+          printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+          chmod 600 ~/.config/rclone/rclone.conf
+          NAME=$(head -1 latest.txt | tr -d '\r\n ')
+          case "$NAME" in
+            Resumen_noticias_*.mp3) ;;
+            *) echo "::error::Nombre inesperado en latest.txt"; exit 1 ;;
+          esac
+          if [ -n "$(rclone lsf "noticias:$NAME" 2>/dev/null)" ]; then
+            echo "$NAME ya está en Drive; nada que hacer."
+            exit 0
+          fi
+          rclone copyto latest.mp3 "noticias:$NAME" --retries 5
+          echo "Subido $NAME"
